@@ -1,6 +1,5 @@
 //
 //Created by Ardil Yuce
-// 32375
 //
 
 #include <iostream>
@@ -13,11 +12,12 @@
 #include <vector>
 using namespace std;
 
-mutex cout_mutex;
+mutex cout_mutex; //mutex to prevent printing at the same time
 int target, rand_lower_bound, rand_upper_bound;
 vector<int> wins;
 int winner_id = -1;
 bool start_signal = false;
+bool game_over = false;
 
 //Begin: Taken from "7-multithreading.pptx"
 int random_range(const int & min, const int & max)
@@ -28,48 +28,56 @@ int random_range(const int & min, const int & max)
 }
 //End: Taken from "7-multithreading.pptx"
 
-void player_function(int player_id)
+
+void player_function(int player_id) //function executed by each player thread
 {
-    while(!start_signal)
+    while(!start_signal) //wait until the start signal is given
     {
-        this_thread::yield();
+        this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    this_thread::sleep_until( chrono::system_clock::now()+chrono::seconds(3));
+    this_thread::sleep_until( chrono::system_clock::now()+chrono::seconds(3)); //wait 3 seconds in the first round
 
-    while (winner_id == -1)
+    while (!game_over)
     {
+        //get the current time
         time_t tt = chrono::system_clock::to_time_t(chrono::system_clock::now());
-        tm ptm;
-        localtime_r(&tt, &ptm);
-        int guess = random_range(rand_lower_bound, rand_upper_bound);
+        struct tm *ptm = localtime(&tt);
+
+        int guess = random_range(rand_lower_bound, rand_upper_bound); //make a guess
+
+        cout_mutex.lock();
         if (guess == target)
         {
-            cout_mutex.lock();
-            if (winner_id == -1)
+            if (winner_id == -1 and start_signal)
             {
                 winner_id = player_id;
-                cout << "Player with id " << player_id << " guessed " << guess << " correctly at: " << put_time(&ptm, "%X") << endl << endl;
+                cout << "Player with id " << player_id << " guessed " << guess << " correctly at: " << put_time(ptm, "%X") << endl << endl;
+                cout_mutex.unlock();
+                this_thread::sleep_for(chrono::seconds(1)); //wait one second before the next guess
             }
-            cout_mutex.unlock();
+            else {cout_mutex.unlock();}
+
         }
         else
         {
-            cout_mutex.lock();
-            if (winner_id == -1)
+            if (winner_id == -1 and start_signal)
             {
-                cout << "Player with id " << player_id << " guessed " << guess << " incorrectly at: " << put_time(&ptm,"%X") << endl;
+                cout << "Player with id " << player_id << " guessed " << guess << " incorrectly at: " << put_time(ptm,"%X") << endl;
+                cout_mutex.unlock();
+                this_thread::sleep_for(chrono::seconds(1)); //wait one second before the next guess
             }
-            cout_mutex.unlock();
+            else {cout_mutex.unlock();}
         }
-        this_thread::sleep_for(chrono::seconds(1));
+
     }
 }
 
-void host_function(int number_of_players, int number_of_rounds)
+void host_function(int number_of_players, int number_of_rounds) //function executed by host thread to manage the game
 {
-    wins.resize(number_of_players, 0);
+    wins.resize(number_of_players, 0); //initialize the wins vector
 
+    //create and start player threads
     vector<thread> players;
     for (int i = 0; i < number_of_players; i++)
     {
@@ -79,48 +87,47 @@ void host_function(int number_of_players, int number_of_rounds)
     cout << endl;
     for (int i = 0; i < number_of_rounds; i++)
     {
-        winner_id = -1;
+        winner_id = -1; //reset winner_id for new round
         time_t tt = chrono::system_clock::to_time_t(chrono::system_clock::now());
-        tm ptm;
-        localtime_r(&tt, &ptm);
+        struct tm *ptm = localtime(&tt);
 
+        //start of the new round
         cout_mutex.lock();
         cout << "---------------------------------------------------" << endl;
-        cout_mutex.unlock();
-
-        if (i == 0)
+        if (i == 0) //first round of the game
         {
-            cout << "Game started at: " << put_time(&ptm,"%X")<<endl;
+            cout << "Game started at: " << put_time(ptm,"%X")<<endl;
             cout << "Round 1 will start 3 seconds later" << endl << endl;
         }
         else
         {
-            cout_mutex.lock();
-            cout << "Round " << i+1 << " started at: " << put_time(&ptm,"%X") << endl;
-            cout_mutex.unlock();
+            cout << "Round " << i+1 << " started at: " << put_time(ptm,"%X") << endl;
         }
 
-        target = random_range(rand_lower_bound, rand_upper_bound);
+        target = random_range(rand_lower_bound, rand_upper_bound); //set a target for the round
 
-        cout_mutex.lock();
         cout << "Target is " << target << endl << endl;
         cout_mutex.unlock();
 
-        start_signal = true;
-        while (winner_id == -1)
+        start_signal = true; //signal players to start
+
+        while (winner_id == -1) //wait until a player wins the round
         {
-            this_thread::yield();
+            this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
-        wins[winner_id]++;
         start_signal = false;
+        wins[winner_id]++; //update the wins count;
     }
 
-    for (int i = 0; i < number_of_players; i++)
+    game_over = true; //notify all threads that game is over
+
+    for (int i = 0; i < number_of_players; i++) //wait for all player threads to finish
     {
         players[i].join();
     }
 
+    //print the final leaderboard
     cout_mutex.lock();
     cout << "Game is over!" << endl;
     cout <<"Leaderboard:" << endl;
@@ -161,7 +168,7 @@ int main()
         }
     }while(rand_lower_bound > rand_upper_bound);
 
-    thread host_thread(host_function, number_of_players, number_of_rounds);
+    thread host_thread(host_function, number_of_players, number_of_rounds); //create and start the host thread
     host_thread.join();
 
     return 0;
